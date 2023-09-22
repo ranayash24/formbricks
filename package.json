@@ -18,7 +18,7 @@
     "db:migrate:vercel": "turbo run db:migrate:vercel",
     "db:push": "turbo run db:push",
     "go": "turbo run go --concurrency 20",
-    "dev": "turbo run dev -H 0.0.0.0 --parallel",
+    "dev": "turbo run dev --parallel",
     "pre-commit": "lint-staged",
     "start": "turbo run start --parallel",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
