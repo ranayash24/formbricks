@@ -1,20 +1,41 @@
 "use server";
 
-import { getSpreadSheets } from "@formbricks/lib/googleSheet/service";
-import { createOrUpdateIntegration, deleteIntegration } from "@formbricks/lib/integration/service";
-import { TGoogleSheetIntegration } from "@formbricks/types/v1/integrations";
+import { authenticatedActionClient } from "@/lib/utils/action-client";
+import { checkAuthorizationUpdated } from "@/lib/utils/action-client-middleware";
+import { getOrganizationIdFromEnvironmentId, getProjectIdFromEnvironmentId } from "@/lib/utils/helper";
+import { z } from "zod";
+import { getSpreadsheetNameById } from "@formbricks/lib/googleSheet/service";
+import { ZIntegrationGoogleSheets } from "@formbricks/types/integration/google-sheet";
 
-export async function upsertIntegrationAction(
-  environmentId: string,
-  integrationData: Partial<TGoogleSheetIntegration>
-) {
-  return await createOrUpdateIntegration(environmentId, integrationData);
-}
+const ZGetSpreadsheetNameByIdAction = z.object({
+  googleSheetIntegration: ZIntegrationGoogleSheets,
+  environmentId: z.string(),
+  spreadsheetId: z.string(),
+});
 
-export async function deleteIntegrationAction(integrationId: string) {
-  return await deleteIntegration(integrationId);
-}
+export const getSpreadsheetNameByIdAction = authenticatedActionClient
+  .schema(ZGetSpreadsheetNameByIdAction)
+  .action(async ({ ctx, parsedInput }) => {
+    await checkAuthorizationUpdated({
+      userId: ctx.user.id,
+      organizationId: await getOrganizationIdFromEnvironmentId(parsedInput.environmentId),
+      access: [
+        {
+          type: "organization",
+          roles: ["owner", "manager"],
+        },
+        {
+          type: "projectTeam",
+          projectId: await getProjectIdFromEnvironmentId(parsedInput.environmentId),
+          minPermission: "readWrite",
+        },
+      ],
+    });
 
-export async function refreshSheetAction(environmentId: string) {
-  return await getSpreadSheets(environmentId);
-}
+    const integrationData = structuredClone(parsedInput.googleSheetIntegration);
+    integrationData.config.data.forEach((data) => {
+      data.createdAt = new Date(data.createdAt);
+    });
+
+    return await getSpreadsheetNameById(integrationData, parsedInput.spreadsheetId);
+  });

@@ -1,90 +1,148 @@
-import { timeSinceConditionally } from "@formbricks/lib/time";
-import { TResponse } from "@formbricks/types/v1/responses";
-import { TSurveyWithAnalytics } from "@formbricks/types/v1/surveys";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@formbricks/ui";
-import { QuestionMarkCircleIcon } from "@heroicons/react/24/solid";
+"use client";
+
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/modules/ui/components/tooltip";
+import { useTranslate } from "@tolgee/react";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
+import { TSurveySummary } from "@formbricks/types/surveys/types";
 
 interface SummaryMetadataProps {
-  responses: TResponse[];
-  survey: TSurveyWithAnalytics;
+  setShowDropOffs: React.Dispatch<React.SetStateAction<boolean>>;
+  showDropOffs: boolean;
+  surveySummary: TSurveySummary["meta"];
+  isLoading: boolean;
 }
 
-export default function SummaryMetadata({ responses, survey }: SummaryMetadataProps) {
-  const completionRate = !responses
-    ? 0
-    : (responses.filter((r) => r.finished).length / responses.length) * 100;
-
+const StatCard = ({ label, percentage, value, tooltipText, isLoading }) => {
   return (
-    <>
-      <div className="mb-4 ">
-        <div className="flex flex-col-reverse gap-y-2 lg:grid lg:grid-cols-2 lg:gap-x-2">
-          <div className="grid grid-cols-2 gap-4 md:grid md:grid-cols-4 md:gap-x-2">
-            <div className="flex flex-col justify-between space-y-2 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-sm text-slate-600">Survey displays</p>
-              <p className="text-2xl font-bold text-slate-800">
-                {survey.analytics.numDisplays === 0 ? <span>-</span> : survey.analytics.numDisplays}
-              </p>
-            </div>
-            <div className="flex flex-col justify-between space-y-2 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <p className="text-sm text-slate-600">Total Responses</p>
-              <p className="text-2xl font-bold text-slate-800">
-                {responses.length === 0 ? <span>-</span> : responses.length}
-              </p>
-            </div>
-            <TooltipProvider delayDuration={50}>
-              <Tooltip>
-                <TooltipTrigger>
-                  <div className="flex h-full cursor-default flex-col justify-between space-y-2 rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm">
-                    <p className="text-sm text-slate-600">
-                      Response %
-                      <QuestionMarkCircleIcon className="mb-1 ml-2 inline h-4 w-4 text-slate-500" />
-                    </p>
-                    <p className="text-2xl font-bold text-slate-800">
-                      {survey.analytics.responseRate === null || survey.analytics.responseRate === 0 ? (
-                        <span>-</span>
-                      ) : (
-                        <span>{Math.round(survey.analytics.responseRate * 100)} %</span>
-                      )}
-                    </p>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>% of people who responded when survey was shown.</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <TooltipProvider delayDuration={50}>
-              <Tooltip>
-                <TooltipTrigger>
-                  <div className="flex cursor-default flex-col justify-between space-y-2 rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm">
-                    <p className="text-sm text-slate-600">
-                      Completion %
-                      <QuestionMarkCircleIcon className="mb-1 ml-2 inline h-4 w-4 text-slate-500" />
-                    </p>
-                    <p className="text-2xl font-bold text-slate-800">
-                      {responses.length === 0 ? (
-                        <span>-</span>
-                      ) : (
-                        <span>{parseFloat(completionRate.toFixed(2))} %</span>
-                      )}
-                    </p>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>
-                    % of people who started <strong>and</strong> completed the survey.
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+    <TooltipProvider delayDuration={50}>
+      <Tooltip>
+        <TooltipTrigger>
+          <div className="flex h-full cursor-default flex-col justify-between space-y-2 rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm">
+            <p className="flex items-center gap-1 text-sm text-slate-600">
+              {label}
+              {typeof percentage === "number" && !isNaN(percentage) && !isLoading && (
+                <span className="ml-1 rounded-xl bg-slate-100 px-2 py-1 text-xs">{percentage}%</span>
+              )}
+            </p>
+            {isLoading ? (
+              <div className="h-6 w-12 animate-pulse rounded-full bg-slate-200"></div>
+            ) : (
+              <p className="text-2xl font-bold text-slate-800">{value}</p>
+            )}
           </div>
-          <div className="flex flex-col justify-between lg:col-span-1">
-            <div className="text-right text-xs text-slate-400">
-              Last updated: {timeSinceConditionally(survey.updatedAt.toISOString())}
-            </div>
-          </div>
-        </div>
-      </div>
-    </>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p>{tooltipText}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
-}
+};
+
+const formatTime = (ttc) => {
+  const seconds = ttc / 1000;
+  let formattedValue;
+
+  if (seconds >= 60) {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    formattedValue = `${minutes}m ${remainingSeconds.toFixed(2)}s`;
+  } else {
+    formattedValue = `${seconds.toFixed(2)}s`;
+  }
+
+  return formattedValue;
+};
+
+export const SummaryMetadata = ({
+  setShowDropOffs,
+  showDropOffs,
+  surveySummary,
+  isLoading,
+}: SummaryMetadataProps) => {
+  const {
+    completedPercentage,
+    completedResponses,
+    displayCount,
+    dropOffPercentage,
+    dropOffCount,
+    startsPercentage,
+    totalResponses,
+    ttcAverage,
+  } = surveySummary;
+  const { t } = useTranslate();
+  return (
+    <div>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-5 md:gap-x-2 lg:col-span-4">
+        <StatCard
+          label={t("environments.surveys.summary.impressions")}
+          percentage={null}
+          value={displayCount === 0 ? <span>-</span> : displayCount}
+          tooltipText={t("environments.surveys.summary.impressions_tooltip")}
+          isLoading={isLoading}
+        />
+        <StatCard
+          label={t("environments.surveys.summary.starts")}
+          percentage={Math.round(startsPercentage) > 100 ? null : Math.round(startsPercentage)}
+          value={totalResponses === 0 ? <span>-</span> : totalResponses}
+          tooltipText={t("environments.surveys.summary.starts_tooltip")}
+          isLoading={isLoading}
+        />
+        <StatCard
+          label={t("environments.surveys.summary.completed")}
+          percentage={Math.round(completedPercentage) > 100 ? null : Math.round(completedPercentage)}
+          value={completedResponses === 0 ? <span>-</span> : completedResponses}
+          tooltipText={t("environments.surveys.summary.completed_tooltip")}
+          isLoading={isLoading}
+        />
+
+        <TooltipProvider delayDuration={50}>
+          <Tooltip>
+            <TooltipTrigger>
+              <div
+                onClick={() => setShowDropOffs(!showDropOffs)}
+                className="group flex h-full w-full cursor-pointer flex-col justify-between space-y-2 rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm">
+                <span className="text-sm text-slate-600">
+                  {t("environments.surveys.summary.drop_offs")}
+                  {`${Math.round(dropOffPercentage)}%` !== "NaN%" && !isLoading && (
+                    <span className="ml-1 rounded-xl bg-slate-100 px-2 py-1 text-xs">{`${Math.round(dropOffPercentage)}%`}</span>
+                  )}
+                </span>
+                <div className="flex w-full items-end justify-between">
+                  <span className="text-2xl font-bold text-slate-800">
+                    {isLoading ? (
+                      <div className="h-6 w-12 animate-pulse rounded-full bg-slate-200"></div>
+                    ) : dropOffCount === 0 ? (
+                      <span>-</span>
+                    ) : (
+                      dropOffCount
+                    )}
+                  </span>
+                  {!isLoading && (
+                    <span className="ml-1 flex items-center rounded-md bg-slate-800 px-2 py-1 text-xs text-slate-50 group-hover:bg-slate-700">
+                      {showDropOffs ? (
+                        <ChevronUpIcon className="h-4 w-4" />
+                      ) : (
+                        <ChevronDownIcon className="h-4 w-4" />
+                      )}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t("environments.surveys.summary.drop_offs_tooltip")}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <StatCard
+          label={t("environments.surveys.summary.time_to_complete")}
+          percentage={null}
+          value={ttcAverage === 0 ? <span>-</span> : `${formatTime(ttcAverage)}`}
+          tooltipText={t("environments.surveys.summary.ttc_tooltip")}
+          isLoading={isLoading}
+        />
+      </div>
+    </div>
+  );
+};

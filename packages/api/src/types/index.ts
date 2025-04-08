@@ -1,8 +1,13 @@
+import { type ApiErrorResponse } from "@formbricks/types/errors";
+
 export interface ApiConfig {
   environmentId: string;
-  apiHost: string;
+  appUrl: string;
+  isDebug?: boolean;
 }
 
-export type ApiResponse<T> = {
+export type ApiResponse = ApiSuccessResponse | ApiErrorResponse;
+
+export interface ApiSuccessResponse<T = Record<string, unknown>> {
   data: T;
-};
+}

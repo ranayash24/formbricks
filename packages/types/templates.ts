@@ -1,26 +1,56 @@
-import { Question } from "./questions";
+import { z } from "zod";
+import { ZProjectConfigChannel, ZProjectConfigIndustry } from "./project";
+import {
+  ZSurveyEndings,
+  ZSurveyHiddenFields,
+  ZSurveyQuestions,
+  ZSurveyStyling,
+  ZSurveyWelcomeCard,
+} from "./surveys/types";
+import { ZUserObjective } from "./user";
 
-export type Objective =
-  | "increase_user_adoption"
-  | "increase_conversion"
-  | "support_sales"
-  | "sharpen_marketing_messaging"
-  | "improve_user_retention"
-  | "other";
+export const ZTemplateRole = z.enum([
+  "productManager",
+  "customerSuccess",
+  "marketing",
+  "sales",
+  "peopleManager",
+]);
+export type TTemplateRole = z.infer<typeof ZTemplateRole>;
 
-export interface Template {
-  name: string;
-  description: string;
-  icon?: any;
-  category?: "Product Experience" | "Exploration" | "Growth" | "Increase Revenue" | "Customer Success";
-  objectives?: [Objective, Objective?, Objective?];
-  preset: {
-    name: string;
-    questions: Question[];
-    thankYouCard: {
-      enabled: boolean;
-      headline: string;
-      subheader: string;
-    };
-  };
-}
+export const ZTemplate = z.object({
+  name: z.string(),
+  description: z.string(),
+  icon: z.any().optional(),
+  role: ZTemplateRole.optional(),
+  channels: z.array(z.enum(["link", "app", "website"])).optional(),
+  industries: z.array(z.enum(["eCommerce", "saas", "other"])).optional(),
+  objectives: z.array(ZUserObjective).optional(),
+  preset: z.object({
+    name: z.string(),
+    welcomeCard: ZSurveyWelcomeCard,
+    questions: ZSurveyQuestions,
+    endings: ZSurveyEndings,
+    hiddenFields: ZSurveyHiddenFields,
+  }),
+});
+
+export type TTemplate = z.infer<typeof ZTemplate>;
+
+export const ZXMTemplate = z.object({
+  name: z.string(),
+  questions: ZSurveyQuestions,
+  endings: ZSurveyEndings,
+  styling: ZSurveyStyling,
+});
+
+export type TXMTemplate = z.infer<typeof ZXMTemplate>;
+
+export const ZTemplateFilter = z.union([
+  ZProjectConfigChannel,
+  ZProjectConfigIndustry,
+  ZTemplateRole,
+  z.null(),
+]);
+
+export type TTemplateFilter = z.infer<typeof ZTemplateFilter>;

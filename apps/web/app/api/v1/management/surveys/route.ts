@@ -1,16 +1,30 @@
-import { responses } from "@/lib/api/response";
 import { authenticateRequest } from "@/app/api/v1/auth";
-import { NextResponse } from "next/server";
-import { transformErrorToDetails } from "@/lib/api/validator";
-import { createSurvey, getSurveys } from "@formbricks/lib/survey/service";
-import { ZSurveyInput } from "@formbricks/types/v1/surveys";
-import { DatabaseError } from "@formbricks/types/v1/errors";
+import { responses } from "@/app/lib/api/response";
+import { transformErrorToDetails } from "@/app/lib/api/validator";
+import { getMultiLanguagePermission } from "@/modules/ee/license-check/lib/utils";
+import { hasPermission } from "@/modules/organization/settings/api-keys/lib/utils";
+import { getSurveyFollowUpsPermission } from "@/modules/survey/follow-ups/lib/utils";
+import { getOrganizationByEnvironmentId } from "@formbricks/lib/organization/service";
+import { createSurvey } from "@formbricks/lib/survey/service";
+import { logger } from "@formbricks/logger";
+import { DatabaseError } from "@formbricks/types/errors";
+import { ZSurveyCreateInputWithEnvironmentId } from "@formbricks/types/surveys/types";
+import { getSurveys } from "./lib/surveys";
 
-export async function GET(request: Request) {
+export const GET = async (request: Request) => {
   try {
     const authentication = await authenticateRequest(request);
     if (!authentication) return responses.notAuthenticatedResponse();
-    const surveys = await getSurveys(authentication.environmentId!);
+
+    const searchParams = new URL(request.url).searchParams;
+    const limit = searchParams.has("limit") ? Number(searchParams.get("limit")) : undefined;
+    const offset = searchParams.has("offset") ? Number(searchParams.get("offset")) : undefined;
+
+    const environmentIds = authentication.environmentPermissions.map(
+      (permission) => permission.environmentId
+    );
+    const surveys = await getSurveys(environmentIds, limit, offset);
+
     return responses.successResponse(surveys);
   } catch (error) {
     if (error instanceof DatabaseError) {
@@ -18,14 +32,21 @@ export async function GET(request: Request) {
     }
     throw error;
   }
-}
+};
 
-export async function POST(request: Request): Promise<NextResponse> {
+export const POST = async (request: Request): Promise<Response> => {
   try {
     const authentication = await authenticateRequest(request);
     if (!authentication) return responses.notAuthenticatedResponse();
-    const surveyInput = await request.json();
-    const inputValidation = ZSurveyInput.safeParse(surveyInput);
+
+    let surveyInput;
+    try {
+      surveyInput = await request.json();
+    } catch (error) {
+      logger.error({ error, url: request.url }, "Error parsing JSON");
+      return responses.badRequestResponse("Malformed JSON input, please check your request body");
+    }
+    const inputValidation = ZSurveyCreateInputWithEnvironmentId.safeParse(surveyInput);
 
     if (!inputValidation.success) {
       return responses.badRequestResponse(
@@ -35,10 +56,34 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const environmentId = authentication.environmentId;
-    const surveyData = { ...inputValidation.data, environmentId: undefined };
+    const environmentId = inputValidation.data.environmentId;
 
-    const survey = await createSurvey(environmentId, surveyData);
+    if (!hasPermission(authentication.environmentPermissions, environmentId, "POST")) {
+      return responses.unauthorizedResponse();
+    }
+
+    const organization = await getOrganizationByEnvironmentId(environmentId);
+    if (!organization) {
+      return responses.notFoundResponse("Organization", null);
+    }
+
+    const surveyData = { ...inputValidation.data, environmentId };
+
+    if (surveyData.followUps?.length) {
+      const isSurveyFollowUpsEnabled = await getSurveyFollowUpsPermission(organization.billing.plan);
+      if (!isSurveyFollowUpsEnabled) {
+        return responses.forbiddenResponse("Survey follow ups are not enabled allowed for this organization");
+      }
+    }
+
+    if (surveyData.languages && surveyData.languages.length) {
+      const isMultiLanguageEnabled = await getMultiLanguagePermission(organization.billing.plan);
+      if (!isMultiLanguageEnabled) {
+        return responses.forbiddenResponse("Multi language is not enabled for this organization");
+      }
+    }
+
+    const survey = await createSurvey(environmentId, { ...surveyData, environmentId: undefined });
     return responses.successResponse(survey);
   } catch (error) {
     if (error instanceof DatabaseError) {
@@ -46,4 +91,4 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
     throw error;
   }
-}
+};

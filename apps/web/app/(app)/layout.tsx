@@ -1,31 +1,44 @@
-import FormbricksClient from "@/app/(app)/FormbricksClient";
-import { PHProvider, PostHogPageview } from "@/app/PostHogClient";
-import { authOptions } from "@/app/api/auth/[...nextauth]/authOptions";
+import { FormbricksClient } from "@/app/(app)/components/FormbricksClient";
+import { IntercomClientWrapper } from "@/app/intercom/IntercomClientWrapper";
+import { authOptions } from "@/modules/auth/lib/authOptions";
+import { ClientLogout } from "@/modules/ui/components/client-logout";
+import { NoMobileOverlay } from "@/modules/ui/components/no-mobile-overlay";
+import { PHProvider, PostHogPageview } from "@/modules/ui/components/post-hog-client";
+import { ToasterClient } from "@/modules/ui/components/toaster-client";
 import { getServerSession } from "next-auth";
-import { redirect } from "next/navigation";
 import { Suspense } from "react";
-import PosthogIdentify from "./PosthogIdentify";
-import { NoMobileOverlay } from "@formbricks/ui";
+import { IS_POSTHOG_CONFIGURED, POSTHOG_API_HOST, POSTHOG_API_KEY } from "@formbricks/lib/constants";
+import { getUser } from "@formbricks/lib/user/service";
 
-export default async function AppLayout({ children }) {
+const AppLayout = async ({ children }) => {
   const session = await getServerSession(authOptions);
-  if (!session) {
-    return redirect(`/auth/login`);
+  const user = session?.user?.id ? await getUser(session.user.id) : null;
+
+  // If user account is deactivated, log them out instead of rendering the app
+  if (user?.isActive === false) {
+    return <ClientLogout />;
   }
 
   return (
     <>
       <NoMobileOverlay />
       <Suspense>
-        <PostHogPageview />
+        <PostHogPageview
+          posthogEnabled={IS_POSTHOG_CONFIGURED}
+          postHogApiHost={POSTHOG_API_HOST}
+          postHogApiKey={POSTHOG_API_KEY}
+        />
       </Suspense>
-      <PHProvider>
+      <PHProvider posthogEnabled={IS_POSTHOG_CONFIGURED}>
         <>
-          <PosthogIdentify session={session} />
-          <FormbricksClient session={session} />
+          {user ? <FormbricksClient userId={user.id} email={user.email} /> : null}
+          <IntercomClientWrapper user={user} />
+          <ToasterClient />
           {children}
         </>
       </PHProvider>
     </>
   );
-}
+};
+
+export default AppLayout;

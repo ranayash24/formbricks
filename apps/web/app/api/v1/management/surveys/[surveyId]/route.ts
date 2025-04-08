@@ -1,78 +1,117 @@
-import { responses } from "@/lib/api/response";
-import { NextResponse } from "next/server";
-import { getSurvey, updateSurvey, deleteSurvey } from "@formbricks/lib/survey/service";
-import { TSurvey, ZSurveyInput } from "@formbricks/types/v1/surveys";
-import { transformErrorToDetails } from "@/lib/api/validator";
-import { authenticateRequest } from "@/app/api/v1/auth";
-import { handleErrorResponse } from "@/app/api/v1/auth";
+import { authenticateRequest, handleErrorResponse } from "@/app/api/v1/auth";
+import { deleteSurvey } from "@/app/api/v1/management/surveys/[surveyId]/lib/surveys";
+import { responses } from "@/app/lib/api/response";
+import { transformErrorToDetails } from "@/app/lib/api/validator";
+import { getMultiLanguagePermission } from "@/modules/ee/license-check/lib/utils";
+import { hasPermission } from "@/modules/organization/settings/api-keys/lib/utils";
+import { getSurveyFollowUpsPermission } from "@/modules/survey/follow-ups/lib/utils";
+import { getOrganizationByEnvironmentId } from "@formbricks/lib/organization/service";
+import { getSurvey, updateSurvey } from "@formbricks/lib/survey/service";
+import { logger } from "@formbricks/logger";
+import { TAuthenticationApiKey } from "@formbricks/types/auth";
+import { ZSurveyUpdateInput } from "@formbricks/types/surveys/types";
 
-async function fetchAndAuthorizeSurvey(authentication: any, surveyId: string): Promise<TSurvey | null> {
+const fetchAndAuthorizeSurvey = async (
+  surveyId: string,
+  authentication: TAuthenticationApiKey,
+  requiredPermission: "GET" | "PUT" | "DELETE"
+) => {
   const survey = await getSurvey(surveyId);
   if (!survey) {
-    return null;
+    return { error: responses.notFoundResponse("Survey", surveyId) };
   }
-  if (survey.environmentId !== authentication.environmentId) {
-    throw new Error("Unauthorized");
+  if (!hasPermission(authentication.environmentPermissions, survey.environmentId, requiredPermission)) {
+    return { error: responses.unauthorizedResponse() };
   }
-  return survey;
-}
 
-export async function GET(
+  return { survey };
+};
+
+export const GET = async (
   request: Request,
-  { params }: { params: { surveyId: string } }
-): Promise<NextResponse> {
+  props: { params: Promise<{ surveyId: string }> }
+): Promise<Response> => {
+  const params = await props.params;
   try {
     const authentication = await authenticateRequest(request);
     if (!authentication) return responses.notAuthenticatedResponse();
-    const survey = await fetchAndAuthorizeSurvey(authentication, params.surveyId);
-    if (survey) {
-      return responses.successResponse(survey);
-    }
-    return responses.notFoundResponse("Survey", params.surveyId);
+    const result = await fetchAndAuthorizeSurvey(params.surveyId, authentication, "GET");
+    if (result.error) return result.error;
+    return responses.successResponse(result.survey);
   } catch (error) {
     return handleErrorResponse(error);
   }
-}
+};
 
-export async function DELETE(
+export const DELETE = async (
   request: Request,
-  { params }: { params: { surveyId: string } }
-): Promise<NextResponse> {
+  props: { params: Promise<{ surveyId: string }> }
+): Promise<Response> => {
+  const params = await props.params;
   try {
     const authentication = await authenticateRequest(request);
     if (!authentication) return responses.notAuthenticatedResponse();
-    const survey = await fetchAndAuthorizeSurvey(authentication, params.surveyId);
-    if (!survey) {
-      return responses.notFoundResponse("Survey", params.surveyId);
-    }
+    const result = await fetchAndAuthorizeSurvey(params.surveyId, authentication, "DELETE");
+    if (result.error) return result.error;
     const deletedSurvey = await deleteSurvey(params.surveyId);
     return responses.successResponse(deletedSurvey);
   } catch (error) {
     return handleErrorResponse(error);
   }
-}
+};
 
-export async function PUT(
+export const PUT = async (
   request: Request,
-  { params }: { params: { surveyId: string } }
-): Promise<NextResponse> {
+  props: { params: Promise<{ surveyId: string }> }
+): Promise<Response> => {
+  const params = await props.params;
   try {
     const authentication = await authenticateRequest(request);
     if (!authentication) return responses.notAuthenticatedResponse();
-    const survey = await fetchAndAuthorizeSurvey(authentication, params.surveyId);
-    if (!survey) {
-      return responses.notFoundResponse("Survey", params.surveyId);
+    const result = await fetchAndAuthorizeSurvey(params.surveyId, authentication, "PUT");
+    if (result.error) return result.error;
+
+    const organization = await getOrganizationByEnvironmentId(result.survey.environmentId);
+    if (!organization) {
+      return responses.notFoundResponse("Organization", null);
     }
-    const surveyUpdate = await request.json();
-    const inputValidation = ZSurveyInput.safeParse(surveyUpdate);
+
+    let surveyUpdate;
+    try {
+      surveyUpdate = await request.json();
+    } catch (error) {
+      logger.error({ error, url: request.url }, "Error parsing JSON input");
+      return responses.badRequestResponse("Malformed JSON input, please check your request body");
+    }
+
+    const inputValidation = ZSurveyUpdateInput.safeParse({
+      ...result.survey,
+      ...surveyUpdate,
+    });
+
     if (!inputValidation.success) {
       return responses.badRequestResponse(
         "Fields are missing or incorrectly formatted",
         transformErrorToDetails(inputValidation.error)
       );
     }
-    return responses.successResponse(await updateSurvey(inputValidation.data));
+
+    if (surveyUpdate.followUps && surveyUpdate.followUps.length) {
+      const isSurveyFollowUpsEnabled = await getSurveyFollowUpsPermission(organization.billing.plan);
+      if (!isSurveyFollowUpsEnabled) {
+        return responses.forbiddenResponse("Survey follow ups are not enabled for this organization");
+      }
+    }
+
+    if (surveyUpdate.languages && surveyUpdate.languages.length) {
+      const isMultiLanguageEnabled = await getMultiLanguagePermission(organization.billing.plan);
+      if (!isMultiLanguageEnabled) {
+        return responses.forbiddenResponse("Multi language is not enabled for this organization");
+      }
+    }
+
+    return responses.successResponse(await updateSurvey({ ...inputValidation.data, id: params.surveyId }));
   } catch (error) {
     return handleErrorResponse(error);
   }
-}
+};

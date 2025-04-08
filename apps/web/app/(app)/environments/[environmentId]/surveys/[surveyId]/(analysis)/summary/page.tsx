@@ -1,64 +1,105 @@
-export const revalidate = REVALIDATION_INTERVAL;
+import { SurveyAnalysisNavigation } from "@/app/(app)/environments/[environmentId]/surveys/[surveyId]/(analysis)/components/SurveyAnalysisNavigation";
+import { EnableInsightsBanner } from "@/app/(app)/environments/[environmentId]/surveys/[surveyId]/(analysis)/summary/components/EnableInsightsBanner";
+import { SummaryPage } from "@/app/(app)/environments/[environmentId]/surveys/[surveyId]/(analysis)/summary/components/SummaryPage";
+import { SurveyAnalysisCTA } from "@/app/(app)/environments/[environmentId]/surveys/[surveyId]/(analysis)/summary/components/SurveyAnalysisCTA";
+import { needsInsightsGeneration } from "@/app/(app)/environments/[environmentId]/surveys/[surveyId]/(analysis)/summary/lib/utils";
+import { getIsAIEnabled } from "@/modules/ee/license-check/lib/utils";
+import { getEnvironmentAuth } from "@/modules/environments/lib/utils";
+import { PageContentWrapper } from "@/modules/ui/components/page-content-wrapper";
+import { PageHeader } from "@/modules/ui/components/page-header";
+import { SettingsId } from "@/modules/ui/components/settings-id";
+import { getTranslate } from "@/tolgee/server";
+import { notFound } from "next/navigation";
+import {
+  DEFAULT_LOCALE,
+  DOCUMENTS_PER_PAGE,
+  MAX_RESPONSES_FOR_INSIGHT_GENERATION,
+  WEBAPP_URL,
+} from "@formbricks/lib/constants";
+import { getSurveyDomain } from "@formbricks/lib/getSurveyUrl";
+import { getResponseCountBySurveyId } from "@formbricks/lib/response/service";
+import { getSurvey } from "@formbricks/lib/survey/service";
+import { getUser } from "@formbricks/lib/user/service";
 
-import ResponsesLimitReachedBanner from "@/app/(app)/environments/[environmentId]/surveys/[surveyId]/(analysis)/components/ResponsesLimitReachedBanner";
-import { getAnalysisData } from "@/app/(app)/environments/[environmentId]/surveys/[surveyId]/(analysis)/data";
-import SummaryPage from "@/app/(app)/environments/[environmentId]/surveys/[surveyId]/(analysis)/summary/components/SummaryPage";
-import { authOptions } from "@/app/api/auth/[...nextauth]/authOptions";
-import { REVALIDATION_INTERVAL, SURVEY_BASE_URL } from "@formbricks/lib/constants";
-import { getEnvironment } from "@formbricks/lib/environment/service";
-import { getProductByEnvironmentId } from "@formbricks/lib/product/service";
-import { getTagsByEnvironmentId } from "@formbricks/lib/tag/service";
-import { getServerSession } from "next-auth";
-import { generateSurveySingleUseId } from "@/lib/singleUseSurveys";
+const SurveyPage = async (props: { params: Promise<{ environmentId: string; surveyId: string }> }) => {
+  const params = await props.params;
+  const t = await getTranslate();
 
-const generateSingleUseIds = (isEncrypted: boolean) => {
-  return Array(5)
-    .fill(null)
-    .map(() => {
-      return generateSurveySingleUseId(isEncrypted);
-    });
-};
+  const { session, environment, organization, isReadOnly } = await getEnvironmentAuth(params.environmentId);
 
-export default async function Page({ params }) {
-  const session = await getServerSession(authOptions);
-  if (!session) {
-    throw new Error("Unauthorized");
+  const surveyId = params.surveyId;
+
+  if (!surveyId) {
+    return notFound();
   }
 
-  const [{ responses, survey }, environment] = await Promise.all([
-    getAnalysisData(params.surveyId, params.environmentId),
-    getEnvironment(params.environmentId),
-  ]);
-  const isSingleUseSurvey = survey.singleUse?.enabled ?? false;
+  const survey = await getSurvey(params.surveyId);
 
-  let singleUseIds: string[] | undefined = undefined;
-  if (isSingleUseSurvey) {
-    singleUseIds = generateSingleUseIds(survey.singleUse?.isEncrypted ?? false);
+  if (!survey) {
+    throw new Error(t("common.survey_not_found"));
   }
 
-  if (!environment) {
-    throw new Error("Environment not found");
+  const user = await getUser(session.user.id);
+
+  if (!user) {
+    throw new Error(t("common.user_not_found"));
   }
 
-  const product = await getProductByEnvironmentId(environment.id);
-  if (!product) {
-    throw new Error("Product not found");
-  }
-  const tags = await getTagsByEnvironmentId(params.environmentId);
+  const totalResponseCount = await getResponseCountBySurveyId(params.surveyId);
+
+  // I took this out cause it's cloud only right?
+  // const { active: isEnterpriseEdition } = await getEnterpriseLicense();
+
+  const isAIEnabled = await getIsAIEnabled({
+    isAIEnabled: organization.isAIEnabled,
+    billing: organization.billing,
+  });
+  const shouldGenerateInsights = needsInsightsGeneration(survey);
+  const surveyDomain = getSurveyDomain();
 
   return (
-    <>
-      <ResponsesLimitReachedBanner environmentId={params.environmentId} surveyId={params.surveyId} />
+    <PageContentWrapper>
+      <PageHeader
+        pageTitle={survey.name}
+        cta={
+          <SurveyAnalysisCTA
+            environment={environment}
+            survey={survey}
+            isReadOnly={isReadOnly}
+            user={user}
+            surveyDomain={surveyDomain}
+          />
+        }>
+        {isAIEnabled && shouldGenerateInsights && (
+          <EnableInsightsBanner
+            surveyId={survey.id}
+            surveyResponseCount={totalResponseCount}
+            maxResponseCount={MAX_RESPONSES_FOR_INSIGHT_GENERATION}
+          />
+        )}
+        <SurveyAnalysisNavigation
+          environmentId={environment.id}
+          survey={survey}
+          activeId="summary"
+          initialTotalResponseCount={totalResponseCount}
+        />
+      </PageHeader>
       <SummaryPage
         environment={environment}
-        responses={responses}
         survey={survey}
         surveyId={params.surveyId}
-        surveyBaseUrl={SURVEY_BASE_URL}
-        singleUseIds={isSingleUseSurvey ? singleUseIds : undefined}
-        product={product}
-        environmentTags={tags}
+        webAppUrl={WEBAPP_URL}
+        user={user}
+        totalResponseCount={totalResponseCount}
+        isAIEnabled={isAIEnabled}
+        documentsPerPage={DOCUMENTS_PER_PAGE}
+        isReadOnly={isReadOnly}
+        locale={user.locale ?? DEFAULT_LOCALE}
       />
-    </>
+
+      <SettingsId title={t("common.survey_id")} id={surveyId}></SettingsId>
+    </PageContentWrapper>
   );
-}
+};
+
+export default SurveyPage;

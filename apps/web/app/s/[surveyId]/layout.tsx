@@ -1,10 +1,5 @@
-import LegalFooter from "@/app/s/[surveyId]/LegalFooter";
+import { LinkSurveyLayout, viewport } from "@/modules/survey/link/layout";
 
-export default function SurveyLayout({ children }) {
-  return (
-    <div className="flex h-full flex-col justify-between bg-white">
-      <div className="h-full overflow-y-auto">{children}</div>
-      <LegalFooter />
-    </div>
-  );
-}
+export { viewport };
+
+export default LinkSurveyLayout;

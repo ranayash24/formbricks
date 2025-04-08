@@ -1,15 +1,19 @@
-import { responses } from "@/lib/api/response";
-import { getApiKeyFromKey } from "@formbricks/lib/apiKey/service";
-import { deleteWebhook, getWebhook } from "@formbricks/lib/webhook/service";
+import { authenticateRequest } from "@/app/api/v1/auth";
+import { deleteWebhook, getWebhook } from "@/app/api/v1/webhooks/[webhookId]/lib/webhook";
+import { responses } from "@/app/lib/api/response";
+import { hasPermission } from "@/modules/organization/settings/api-keys/lib/utils";
 import { headers } from "next/headers";
+import { logger } from "@formbricks/logger";
 
-export async function GET(_: Request, { params }: { params: { webhookId: string } }) {
-  const apiKey = headers().get("x-api-key");
+export const GET = async (request: Request, props: { params: Promise<{ webhookId: string }> }) => {
+  const params = await props.params;
+  const headersList = await headers();
+  const apiKey = headersList.get("x-api-key");
   if (!apiKey) {
     return responses.notAuthenticatedResponse();
   }
-  const apiKeyData = await getApiKeyFromKey(apiKey);
-  if (!apiKeyData) {
+  const authentication = await authenticateRequest(request);
+  if (!authentication) {
     return responses.notAuthenticatedResponse();
   }
 
@@ -18,19 +22,21 @@ export async function GET(_: Request, { params }: { params: { webhookId: string 
   if (!webhook) {
     return responses.notFoundResponse("Webhook", params.webhookId);
   }
-  if (webhook.environmentId !== apiKeyData.environmentId) {
+  if (!hasPermission(authentication.environmentPermissions, webhook.environmentId, "GET")) {
     return responses.unauthorizedResponse();
   }
   return responses.successResponse(webhook);
-}
+};
 
-export async function DELETE(_: Request, { params }: { params: { webhookId: string } }) {
-  const apiKey = headers().get("x-api-key");
+export const DELETE = async (request: Request, props: { params: Promise<{ webhookId: string }> }) => {
+  const params = await props.params;
+  const headersList = await headers();
+  const apiKey = headersList.get("x-api-key");
   if (!apiKey) {
     return responses.notAuthenticatedResponse();
   }
-  const apiKeyData = await getApiKeyFromKey(apiKey);
-  if (!apiKeyData) {
+  const authentication = await authenticateRequest(request);
+  if (!authentication) {
     return responses.notAuthenticatedResponse();
   }
 
@@ -39,7 +45,7 @@ export async function DELETE(_: Request, { params }: { params: { webhookId: stri
   if (!webhook) {
     return responses.notFoundResponse("Webhook", params.webhookId);
   }
-  if (webhook.environmentId !== apiKeyData.environmentId) {
+  if (!hasPermission(authentication.environmentPermissions, webhook.environmentId, "DELETE")) {
     return responses.unauthorizedResponse();
   }
 
@@ -48,7 +54,7 @@ export async function DELETE(_: Request, { params }: { params: { webhookId: stri
     const webhook = await deleteWebhook(params.webhookId);
     return responses.successResponse(webhook);
   } catch (e) {
-    console.error(e.message);
+    logger.error({ error: e, url: request.url }, "Error deleting webhook");
     return responses.notFoundResponse("Webhook", params.webhookId);
   }
-}
+};

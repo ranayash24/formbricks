@@ -1,83 +1,150 @@
-import Headline from "@/app/(app)/environments/[environmentId]/surveys/[surveyId]/(analysis)/summary/components/Headline";
-import { truncate } from "@/lib/utils";
-import { timeSince } from "@formbricks/lib/time";
-import type { QuestionSummary } from "@formbricks/types/responses";
-import { TSurveyOpenTextQuestion } from "@formbricks/types/v1/surveys";
-import { PersonAvatar } from "@formbricks/ui";
-import { InboxStackIcon } from "@heroicons/react/24/solid";
+"use client";
+
+import { renderHyperlinkedContent } from "@/modules/analysis/utils";
+import { InsightView } from "@/modules/ee/insights/components/insights-view";
+import { PersonAvatar } from "@/modules/ui/components/avatars";
+import { Button } from "@/modules/ui/components/button";
+import { SecondaryNavigation } from "@/modules/ui/components/secondary-navigation";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/modules/ui/components/table";
+import { useTranslate } from "@tolgee/react";
 import Link from "next/link";
-import { questionTypes } from "@/lib/questions";
+import { useState } from "react";
+import { timeSince } from "@formbricks/lib/time";
+import { getContactIdentifier } from "@formbricks/lib/utils/contact";
+import { TSurvey, TSurveyQuestionSummaryOpenText } from "@formbricks/types/surveys/types";
+import { TUserLocale } from "@formbricks/types/user";
+import { QuestionSummaryHeader } from "./QuestionSummaryHeader";
 
 interface OpenTextSummaryProps {
-  questionSummary: QuestionSummary<TSurveyOpenTextQuestion>;
+  questionSummary: TSurveyQuestionSummaryOpenText;
   environmentId: string;
+  survey: TSurvey;
+  isAIEnabled: boolean;
+  documentsPerPage?: number;
+  locale: TUserLocale;
 }
 
-function findEmail(person) {
-  return person.attributes?.email || null;
-}
+export const OpenTextSummary = ({
+  questionSummary,
+  environmentId,
+  survey,
+  isAIEnabled,
+  documentsPerPage,
+  locale,
+}: OpenTextSummaryProps) => {
+  const { t } = useTranslate();
+  const isInsightsEnabled = isAIEnabled && questionSummary.insightsEnabled;
+  const [visibleResponses, setVisibleResponses] = useState(10);
+  const [activeTab, setActiveTab] = useState<"insights" | "responses">(
+    isInsightsEnabled && questionSummary.insights.length ? "insights" : "responses"
+  );
 
-export default function OpenTextSummary({ questionSummary, environmentId }: OpenTextSummaryProps) {
-  const questionTypeInfo = questionTypes.find((type) => type.id === questionSummary.question.type);
+  const handleLoadMore = () => {
+    // Increase the number of visible responses by 10, not exceeding the total number of responses
+    setVisibleResponses((prevVisibleResponses) =>
+      Math.min(prevVisibleResponses + 10, questionSummary.samples.length)
+    );
+  };
+
+  const tabNavigation = [
+    {
+      id: "insights",
+      label: t("common.insights"),
+      onClick: () => setActiveTab("insights"),
+    },
+    {
+      id: "responses",
+      label: t("common.responses"),
+      onClick: () => setActiveTab("responses"),
+    },
+  ];
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 shadow-sm">
-      <div className="space-y-2 px-4 pb-5 pt-6 md:px-6">
-        <Headline headline={questionSummary.question.headline} required={questionSummary.question.required} />
-
-        <div className="flex space-x-2 text-xs font-semibold text-slate-600 md:text-sm">
-          <div className="flex items-center rounded-lg bg-slate-100 p-2 ">
-            {questionTypeInfo && <questionTypeInfo.icon className="mr-2 h-4 w-4 " />}
-            {questionTypeInfo ? questionTypeInfo.label : "Unknown Question Type"} Question
-          </div>
-          <div className=" flex items-center rounded-lg bg-slate-100 p-2">
-            <InboxStackIcon className="mr-2 h-4 w-4" />
-            {questionSummary.responses.length} Responses
-          </div>
-        </div>
-      </div>
-      <div className="rounded-b-lg bg-white ">
-        <div className="grid h-10 grid-cols-4 items-center border-y border-slate-200 bg-slate-100 text-sm font-bold text-slate-600">
-          <div className="pl-4 md:pl-6">User</div>
-          <div className="col-span-2 pl-4 md:pl-6">Response</div>
-          <div className="px-4 md:px-6">Time</div>
-        </div>
-        {questionSummary.responses.map((response) => {
-          const email = response.person && findEmail(response.person);
-          const displayIdentifier = email || (response.person && truncate(response.person.id, 16)) || null;
-          return (
-            <div
-              key={response.id}
-              className="grid  grid-cols-4 items-center border-b border-slate-100 py-2 text-sm text-slate-800 md:text-base">
-              <div className="pl-4 md:pl-6">
-                {response.person ? (
-                  <Link
-                    className="ph-no-capture group flex items-center"
-                    href={`/environments/${environmentId}/people/${response.person.id}`}>
-                    <div className="hidden md:flex">
-                      <PersonAvatar personId={response.person.id} />
-                    </div>
-                    <p className="ph-no-capture break-all text-slate-600 group-hover:underline md:ml-2">
-                      {displayIdentifier}
-                    </p>
-                  </Link>
-                ) : (
-                  <div className="group flex items-center">
-                    <div className="hidden md:flex">
-                      <PersonAvatar personId="anonymous" />
-                    </div>
-                    <p className="break-all text-slate-600 md:ml-2">Anonymous</p>
-                  </div>
-                )}
+    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <QuestionSummaryHeader
+        questionSummary={questionSummary}
+        survey={survey}
+        additionalInfo={
+          isAIEnabled && questionSummary.insightsEnabled === false ? (
+            <div className="flex items-center space-x-2">
+              <div className="flex items-center rounded-lg bg-slate-100 p-2">
+                {t("environments.surveys.summary.insights_disabled")}
               </div>
-              <div className="ph-no-capture col-span-2 whitespace-pre-wrap pl-6 font-semibold">
-                {response.value}
-              </div>
-              <div className="px-4 text-slate-500 md:px-6">{timeSince(response.updatedAt.toISOString())}</div>
             </div>
-          );
-        })}
+          ) : undefined
+        }
+      />
+      {isInsightsEnabled && (
+        <div className="ml-4">
+          <SecondaryNavigation activeId={activeTab} navigation={tabNavigation} />
+        </div>
+      )}
+      <div className="border-t border-slate-200"></div>
+      <div className="max-h-[40vh] overflow-y-auto">
+        {activeTab === "insights" ? (
+          <InsightView
+            insights={questionSummary.insights}
+            questionId={questionSummary.question.id}
+            surveyId={survey.id}
+            documentsPerPage={documentsPerPage}
+            locale={locale}
+          />
+        ) : activeTab === "responses" ? (
+          <>
+            <Table>
+              <TableHeader className="bg-slate-100">
+                <TableRow>
+                  <TableHead>{t("common.user")}</TableHead>
+                  <TableHead>{t("common.response")}</TableHead>
+                  <TableHead>{t("common.time")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {questionSummary.samples.slice(0, visibleResponses).map((response) => (
+                  <TableRow key={response.id}>
+                    <TableCell>
+                      {response.contact ? (
+                        <Link
+                          className="ph-no-capture group flex items-center"
+                          href={`/environments/${environmentId}/contacts/${response.contact.id}`}>
+                          <div className="hidden md:flex">
+                            <PersonAvatar personId={response.contact.id} />
+                          </div>
+                          <p className="ph-no-capture break-all text-slate-600 group-hover:underline md:ml-2">
+                            {getContactIdentifier(response.contact, response.contactAttributes)}
+                          </p>
+                        </Link>
+                      ) : (
+                        <div className="group flex items-center">
+                          <div className="hidden md:flex">
+                            <PersonAvatar personId="anonymous" />
+                          </div>
+                          <p className="break-normal text-slate-600 md:ml-2">{t("common.anonymous")}</p>
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      {typeof response.value === "string"
+                        ? renderHyperlinkedContent(response.value)
+                        : response.value}
+                    </TableCell>
+                    <TableCell width={120}>
+                      {timeSince(new Date(response.updatedAt).toISOString(), locale)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {visibleResponses < questionSummary.samples.length && (
+              <div className="flex justify-center py-4">
+                <Button onClick={handleLoadMore} variant="secondary" size="sm">
+                  {t("common.load_more")}
+                </Button>
+              </div>
+            )}
+          </>
+        ) : null}
       </div>
     </div>
   );
-}
+};

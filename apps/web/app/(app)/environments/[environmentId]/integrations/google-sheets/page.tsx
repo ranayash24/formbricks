@@ -1,48 +1,59 @@
-import GoogleSheetWrapper from "@/app/(app)/environments/[environmentId]/integrations/google-sheets/GoogleSheetWrapper";
-import GoBackButton from "@/components/shared/GoBackButton";
-import { getSpreadSheets } from "@formbricks/lib/googleSheet/service";
-import { getIntegrations } from "@formbricks/lib/integration/service";
-import { getSurveys } from "@formbricks/lib/survey/service";
-import { TGoogleSheetIntegration, TGoogleSpreadsheet } from "@formbricks/types/v1/integrations";
+import { GoogleSheetWrapper } from "@/app/(app)/environments/[environmentId]/integrations/google-sheets/components/GoogleSheetWrapper";
+import { getSurveys } from "@/app/(app)/environments/[environmentId]/integrations/lib/surveys";
+import { getEnvironmentAuth } from "@/modules/environments/lib/utils";
+import { GoBackButton } from "@/modules/ui/components/go-back-button";
+import { PageContentWrapper } from "@/modules/ui/components/page-content-wrapper";
+import { PageHeader } from "@/modules/ui/components/page-header";
+import { getTranslate } from "@/tolgee/server";
+import { redirect } from "next/navigation";
 import {
   GOOGLE_SHEETS_CLIENT_ID,
-  WEBAPP_URL,
   GOOGLE_SHEETS_CLIENT_SECRET,
   GOOGLE_SHEETS_REDIRECT_URL,
+  WEBAPP_URL,
 } from "@formbricks/lib/constants";
-import { getEnvironment } from "@formbricks/lib/environment/service";
+import { getIntegrations } from "@formbricks/lib/integration/service";
+import { findMatchingLocale } from "@formbricks/lib/utils/locale";
+import { TIntegrationGoogleSheets } from "@formbricks/types/integration/google-sheet";
 
-export default async function GoogleSheet({ params }) {
-  const enabled = !!(GOOGLE_SHEETS_CLIENT_ID && GOOGLE_SHEETS_CLIENT_SECRET && GOOGLE_SHEETS_REDIRECT_URL);
-  const [surveys, integrations, environment] = await Promise.all([
+const Page = async (props) => {
+  const params = await props.params;
+  const t = await getTranslate();
+  const isEnabled = !!(GOOGLE_SHEETS_CLIENT_ID && GOOGLE_SHEETS_CLIENT_SECRET && GOOGLE_SHEETS_REDIRECT_URL);
+
+  const { isReadOnly, environment } = await getEnvironmentAuth(params.environmentId);
+
+  const [surveys, integrations] = await Promise.all([
     getSurveys(params.environmentId),
     getIntegrations(params.environmentId),
-    getEnvironment(params.environmentId),
   ]);
-  if (!environment) {
-    throw new Error("Environment not found");
+
+  const googleSheetIntegration: TIntegrationGoogleSheets | undefined = integrations?.find(
+    (integration): integration is TIntegrationGoogleSheets => integration.type === "googleSheets"
+  );
+
+  const locale = await findMatchingLocale();
+
+  if (isReadOnly) {
+    redirect("./");
   }
 
-  const googleSheetIntegration: TGoogleSheetIntegration | undefined = integrations?.find(
-    (integration): integration is TGoogleSheetIntegration => integration.type === "googleSheets"
-  );
-  let spreadSheetArray: TGoogleSpreadsheet[] = [];
-  if (googleSheetIntegration && googleSheetIntegration.config.key) {
-    spreadSheetArray = await getSpreadSheets(params.environmentId);
-  }
   return (
-    <>
+    <PageContentWrapper>
       <GoBackButton url={`${WEBAPP_URL}/environments/${params.environmentId}/integrations`} />
+      <PageHeader pageTitle={t("environments.integrations.google_sheets.google_sheets_integration")} />
       <div className="h-[75vh] w-full">
         <GoogleSheetWrapper
-          enabled={enabled}
+          isEnabled={isEnabled}
           environment={environment}
           surveys={surveys}
-          spreadSheetArray={spreadSheetArray}
           googleSheetIntegration={googleSheetIntegration}
           webAppUrl={WEBAPP_URL}
+          locale={locale}
         />
       </div>
-    </>
+    </PageContentWrapper>
   );
-}
+};
+
+export default Page;

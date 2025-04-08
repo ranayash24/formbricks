@@ -1,15 +1,16 @@
-import { ResponseAPI } from "./response";
-import { DisplayAPI } from "./display";
-import { ApiConfig } from "../../types";
+import { type ApiConfig } from "../../types";
+import { EnvironmentAPI } from "./environment";
+import { UserAPI } from "./user";
 
 export class Client {
-  response: ResponseAPI;
-  display: DisplayAPI;
+  user: UserAPI;
+  environment: EnvironmentAPI;
 
   constructor(options: ApiConfig) {
-    const { apiHost } = options;
+    const { appUrl, environmentId, isDebug } = options;
+    const isDebugMode = isDebug ?? false;
 
-    this.response = new ResponseAPI(apiHost);
-    this.display = new DisplayAPI(apiHost);
+    this.user = new UserAPI(appUrl, environmentId, isDebugMode);
+    this.environment = new EnvironmentAPI(appUrl, environmentId, isDebugMode);
   }
 }

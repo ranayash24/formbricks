@@ -1,8 +1,10 @@
 {
-  "extends": "@formbricks/tsconfig/base.json",
-  "include": ["."],
-  "exclude": ["dist", "build", "node_modules"],
   "compilerOptions": {
-    "composite": true
-  }
+    "composite": true,
+    "outDir": "./dist",
+    "rootDir": "./"
+  },
+  "exclude": ["dist", "build", "node_modules"],
+  "extends": "@formbricks/config-typescript/node16.json",
+  "include": ["."]
 }

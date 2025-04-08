@@ -1,158 +1,95 @@
 import "server-only";
-
-import { prisma } from "@formbricks/database";
-import { ResourceNotFoundError, DatabaseError, UnknownError } from "@formbricks/types/v1/errors";
-import { TMember, TMembership, TMembershipUpdateInput } from "@formbricks/types/v1/memberships";
 import { Prisma } from "@prisma/client";
-import { cache } from "react";
+import { cache as reactCache } from "react";
+import { prisma } from "@formbricks/database";
+import { logger } from "@formbricks/logger";
+import { ZString } from "@formbricks/types/common";
+import { DatabaseError, UnknownError } from "@formbricks/types/errors";
+import { TMembership, ZMembership } from "@formbricks/types/memberships";
+import { cache } from "../cache";
+import { membershipCache } from "../membership/cache";
+import { organizationCache } from "../organization/cache";
+import { validateInputs } from "../utils/validate";
 
-export const getMembersByTeamId = cache(async (teamId: string): Promise<TMember[]> => {
-  const membersData = await prisma.membership.findMany({
-    where: { teamId },
-    select: {
-      user: {
-        select: {
-          name: true,
-          email: true,
-        },
+export const getMembershipByUserIdOrganizationId = reactCache(
+  async (userId: string, organizationId: string): Promise<TMembership | null> =>
+    cache(
+      async () => {
+        validateInputs([userId, ZString], [organizationId, ZString]);
+
+        try {
+          const membership = await prisma.membership.findUnique({
+            where: {
+              userId_organizationId: {
+                userId,
+                organizationId,
+              },
+            },
+          });
+
+          if (!membership) return null;
+
+          return membership;
+        } catch (error) {
+          if (error instanceof Prisma.PrismaClientKnownRequestError) {
+            logger.error(error, "Error getting membership by user id and organization id");
+            throw new DatabaseError(error.message);
+          }
+
+          throw new UnknownError("Error while fetching membership");
+        }
       },
-      userId: true,
-      accepted: true,
-      role: true,
-    },
-  });
+      [`getMembershipByUserIdOrganizationId-${userId}-${organizationId}`],
+      {
+        tags: [membershipCache.tag.byUserId(userId), membershipCache.tag.byOrganizationId(organizationId)],
+      }
+    )()
+);
 
-  const members = membersData.map((member) => {
-    return {
-      name: member.user?.name || "",
-      email: member.user?.email || "",
-      userId: member.userId,
-      accepted: member.accepted,
-      role: member.role,
-    };
-  });
+export const createMembership = async (
+  organizationId: string,
+  userId: string,
+  data: Partial<TMembership>
+): Promise<TMembership> => {
+  validateInputs([organizationId, ZString], [userId, ZString], [data, ZMembership.partial()]);
 
-  return members;
-});
-
-export const getMembershipByUserIdTeamId = cache(
-  async (userId: string, teamId: string): Promise<TMembership | null> => {
-    const membership = await prisma.membership.findUnique({
+  try {
+    const existingMembership = await prisma.membership.findUnique({
       where: {
-        userId_teamId: {
+        userId_organizationId: {
           userId,
-          teamId,
+          organizationId,
         },
       },
     });
 
-    if (!membership) return null;
+    if (existingMembership) {
+      return existingMembership;
+    }
 
-    return membership;
-  }
-);
-
-export const getMembershipsByUserId = cache(async (userId: string): Promise<TMembership[]> => {
-  const memberships = await prisma.membership.findMany({
-    where: {
-      userId,
-    },
-  });
-
-  return memberships;
-});
-
-export const createMembership = async (
-  teamId: string,
-  userId: string,
-  data: Partial<TMembership>
-): Promise<TMembership> => {
-  try {
     const membership = await prisma.membership.create({
       data: {
         userId,
-        teamId,
+        organizationId,
         accepted: data.accepted,
         role: data.role as TMembership["role"],
       },
     });
+    organizationCache.revalidate({
+      userId,
+    });
 
-    return membership;
-  } catch (error) {
-    throw error;
-  }
-};
-export const updateMembership = async (
-  userId: string,
-  teamId: string,
-  data: TMembershipUpdateInput
-): Promise<TMembership> => {
-  try {
-    const membership = await prisma.membership.update({
-      where: {
-        userId_teamId: {
-          userId,
-          teamId,
-        },
-      },
-      data,
+    membershipCache.revalidate({
+      userId,
+      organizationId,
     });
 
     return membership;
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2016") {
-      throw new ResourceNotFoundError("Membership", `userId: ${userId}, teamId: ${teamId}`);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      throw new DatabaseError(error.message);
     }
 
     throw error;
-  }
-};
-
-export const deleteMembership = async (userId: string, teamId: string): Promise<TMembership> => {
-  const deletedMembership = await prisma.membership.delete({
-    where: {
-      userId_teamId: {
-        teamId,
-        userId,
-      },
-    },
-  });
-
-  return deletedMembership;
-};
-
-export const transferOwnership = async (currentOwnerId: string, newOwnerId: string, teamId: string) => {
-  try {
-    await prisma.$transaction([
-      prisma.membership.update({
-        where: {
-          userId_teamId: {
-            teamId,
-            userId: currentOwnerId,
-          },
-        },
-        data: {
-          role: "admin",
-        },
-      }),
-      prisma.membership.update({
-        where: {
-          userId_teamId: {
-            teamId,
-            userId: newOwnerId,
-          },
-        },
-        data: {
-          role: "owner",
-        },
-      }),
-    ]);
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError) {
-      throw new DatabaseError("Database operation failed");
-    }
-
-    const message = error instanceof Error ? error.message : "";
-    throw new UnknownError(`Error while transfering ownership: ${message}`);
   }
 };

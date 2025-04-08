@@ -1,79 +1,91 @@
-import { responses } from "@/lib/api/response";
-import { NextResponse } from "next/server";
-import { transformErrorToDetails } from "@/lib/api/validator";
+import { authenticateRequest, handleErrorResponse } from "@/app/api/v1/auth";
+import { responses } from "@/app/lib/api/response";
+import { transformErrorToDetails } from "@/app/lib/api/validator";
+import { hasPermission } from "@/modules/organization/settings/api-keys/lib/utils";
 import { deleteResponse, getResponse, updateResponse } from "@formbricks/lib/response/service";
-import { TResponse, ZResponseUpdateInput } from "@formbricks/types/v1/responses";
-import { hasUserEnvironmentAccess } from "@formbricks/lib/environment/auth";
 import { getSurvey } from "@formbricks/lib/survey/service";
-import { authenticateRequest } from "@/app/api/v1/auth";
-import { handleErrorResponse } from "@/app/api/v1/auth";
+import { logger } from "@formbricks/logger";
+import { ZResponseUpdateInput } from "@formbricks/types/responses";
 
-async function fetchAndValidateResponse(authentication: any, responseId: string): Promise<TResponse> {
+async function fetchAndAuthorizeResponse(
+  responseId: string,
+  authentication: any,
+  requiredPermission: "GET" | "PUT" | "DELETE"
+) {
   const response = await getResponse(responseId);
-  if (!response || !(await canUserAccessResponse(authentication, response))) {
-    throw new Error("Unauthorized");
+  if (!response) {
+    return { error: responses.notFoundResponse("Response", responseId) };
   }
-  return response;
+
+  const survey = await getSurvey(response.surveyId);
+  if (!survey) {
+    return { error: responses.notFoundResponse("Survey", response.surveyId, true) };
+  }
+
+  if (!hasPermission(authentication.environmentPermissions, survey.environmentId, requiredPermission)) {
+    return { error: responses.unauthorizedResponse() };
+  }
+
+  return { response };
 }
 
-const canUserAccessResponse = async (authentication: any, response: TResponse): Promise<boolean> => {
-  const survey = await getSurvey(response.surveyId);
-  if (!survey) return false;
-
-  if (authentication.type === "session") {
-    return await hasUserEnvironmentAccess(authentication.session.user.id, survey.environmentId);
-  } else if (authentication.type === "apiKey") {
-    return survey.environmentId === authentication.environmentId;
-  } else {
-    throw Error("Unknown authentication type");
-  }
-};
-
-export async function GET(
+export const GET = async (
   request: Request,
-  { params }: { params: { responseId: string } }
-): Promise<NextResponse> {
+  props: { params: Promise<{ responseId: string }> }
+): Promise<Response> => {
+  const params = await props.params;
   try {
     const authentication = await authenticateRequest(request);
     if (!authentication) return responses.notAuthenticatedResponse();
-    await fetchAndValidateResponse(authentication, params.responseId);
-    const response = await fetchAndValidateResponse(authentication, params.responseId);
-    if (response) {
-      return responses.successResponse(response);
-    }
-    return responses.notFoundResponse("Response", params.responseId);
+
+    const result = await fetchAndAuthorizeResponse(params.responseId, authentication, "GET");
+    if (result.error) return result.error;
+
+    return responses.successResponse(result.response);
   } catch (error) {
     return handleErrorResponse(error);
   }
-}
+};
 
-export async function DELETE(
+export const DELETE = async (
   request: Request,
-  { params }: { params: { responseId: string } }
-): Promise<NextResponse> {
+  props: { params: Promise<{ responseId: string }> }
+): Promise<Response> => {
+  const params = await props.params;
   try {
     const authentication = await authenticateRequest(request);
     if (!authentication) return responses.notAuthenticatedResponse();
-    const response = await fetchAndValidateResponse(authentication, params.responseId);
-    if (!response) {
-      return responses.notFoundResponse("Response", params.responseId);
-    }
+
+    const result = await fetchAndAuthorizeResponse(params.responseId, authentication, "DELETE");
+    if (result.error) return result.error;
+
     const deletedResponse = await deleteResponse(params.responseId);
     return responses.successResponse(deletedResponse);
   } catch (error) {
     return handleErrorResponse(error);
   }
-}
+};
 
-export async function PUT(
+export const PUT = async (
   request: Request,
-  { params }: { params: { responseId: string } }
-): Promise<NextResponse> {
+  props: { params: Promise<{ responseId: string }> }
+): Promise<Response> => {
+  const params = await props.params;
   try {
     const authentication = await authenticateRequest(request);
     if (!authentication) return responses.notAuthenticatedResponse();
-    await fetchAndValidateResponse(authentication, params.responseId);
-    const responseUpdate = await request.json();
+
+    const result = await fetchAndAuthorizeResponse(params.responseId, authentication, "PUT");
+    if (result.error) return result.error;
+
+    let responseUpdate;
+    try {
+      responseUpdate = await request.json();
+    } catch (error) {
+      logger.error({ error, url: request.url }, "Error parsing JSON");
+      return responses.badRequestResponse("Malformed JSON input, please check your request body");
+    }
+
     const inputValidation = ZResponseUpdateInput.safeParse(responseUpdate);
     if (!inputValidation.success) {
       return responses.badRequestResponse(
@@ -85,4 +97,4 @@ export async function PUT(
   } catch (error) {
     return handleErrorResponse(error);
   }
-}
+};
